@@ -104,7 +104,7 @@ To use images you published to your registry, for example with NVKR as described
 nerdctl login <REGISTRY_HOST>
 ```
 
-`<REGISTRY_HOST>` is the host name of your registry. You pass the image references with `--controller-image` and `--provisioned-provider-image` in the next section.
+`<REGISTRY_HOST>` is the host name of your registry. You pass the image references with `--nvke-controller-image` and `--provisioned-provider-image` in the next section.
 
 To build both images from the repository on the bootstrap host instead, run `make -C nvke/cli images`.
 
@@ -114,11 +114,11 @@ To build both images from the repository on the bootstrap host instead, run `mak
 
    ```bash
    nvkectl bootstrap site -f sitespec.yaml \
-     --controller-image <CONTROLLER_IMAGE> \
+     --nvke-controller-image <CONTROLLER_IMAGE> \
      --provisioned-provider-image <PROVISIONED_PROVIDER_IMAGE>
    ```
 
-   Run it in the shell where you exported the SPIRE CA variables to validate the site spec. `<CONTROLLER_IMAGE>` and `<PROVISIONED_PROVIDER_IMAGE>` are full references that include your registry host. Omit both flags to use the local images. `NVKECTL_CONTROLLER_IMAGE` and `NVKECTL_CAPI_PROVISIONED_IMAGE` set the same values from the environment, and a flag wins over its variable.
+   Run it in the shell where you exported the SPIRE CA variables to validate the site spec. `<CONTROLLER_IMAGE>` and `<PROVISIONED_PROVIDER_IMAGE>` are full references that include your registry host. Omit both flags to use the local images. `NVKECTL_NVKE_CONTROLLER_IMAGE` and `NVKECTL_CAPI_PROVISIONED_IMAGE` set the same values from the environment, and a flag wins over its variable.
 
    Before it creates anything, the command refuses to start if a seed cluster from an earlier run still exists, if the etcd encryption key file it would write already exists, if any node already accepts connections on port 6443, or if a local image is missing.
 
