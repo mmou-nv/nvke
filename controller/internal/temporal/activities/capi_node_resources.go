@@ -5,6 +5,7 @@ package activities
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -18,6 +19,8 @@ import (
 	capiexternal "sigs.k8s.io/cluster-api/controllers/external"
 	capiconditions "sigs.k8s.io/cluster-api/util/conditions"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	nicov1 "github.com/dsx-ai-factory/cluster-api-provider-nico/api/v1alpha1"
 
 	"github.com/dsx-ai-factory/nke/controller/internal/clients"
 	"github.com/dsx-ai-factory/nke/controller/internal/clients/shared"
@@ -270,6 +273,14 @@ func (a *Activities) waitForCAPIMachineReady(ctx context.Context, input WaitForC
 	// NicoMachine status carries Forge identity; CAPD and other providers leave
 	// these empty. Lookup must never block provisioning.
 	observedInstanceID, observedMachineID, err := identityFromInfraRef(ctx, a.k8sClient, machine)
+	if nodeSet.Capi != nil && nodeSet.Capi.NicoCluster != nil {
+		if err != nil {
+			return "", fmt.Errorf("read attached NICo host identity: %w", err)
+		}
+		if err := validateAttachedNicoIdentity(node, nodeSet, machine, observedInstanceID, observedMachineID); err != nil {
+			return "", err
+		}
+	}
 	if err != nil {
 		logger.Warn("Could not resolve Forge identity for CAPI machine; skipping identity stamp",
 			"nodeID", input.NodeID, "machine", machine.Name, "error", err)
@@ -323,6 +334,23 @@ func (a *Activities) waitForCAPIMachineReady(ctx context.Context, input WaitForC
 	)
 
 	return ipAddress, nil
+}
+
+func validateAttachedNicoIdentity(node db.Node, nodeSet db.NodeSet, machine *clusterv1.Machine, instanceID, machineID string) error {
+	var template nicov1.NicoMachineTemplate
+	if err := json.Unmarshal(nodeSet.Capi.InfraMachineTemplate, &template); err != nil {
+		return fmt.Errorf("decode pinned NICo template: %w", err)
+	}
+	if machine.Spec.InfrastructureRef.APIGroup != nicov1.GroupVersion.Group || machine.Spec.InfrastructureRef.Kind != "NicoMachine" ||
+		machine.Spec.InfrastructureRef.Name != node.Name || machine.Annotations[constants.MachineAnnotationKeyHostID] != node.ID.String() ||
+		template.Spec.Template.Spec.MachineID == "" || machineID != template.Spec.Template.Spec.MachineID || instanceID == "" {
+		return fmt.Errorf("attached NICo identity is missing or does not match the pinned node and target host")
+	}
+	if node.Nico != nil && ((node.Nico.ForgeInstanceID != "" && node.Nico.ForgeInstanceID != instanceID) ||
+		(node.Nico.ForgeMachineID != "" && node.Nico.ForgeMachineID != machineID)) {
+		return fmt.Errorf("attached NICo identity conflicts with the node's recorded instance or host")
+	}
+	return nil
 }
 
 func (a *Activities) updateCAPIMachineWaitNodeCondition(ctx context.Context, nodeID uuid.UUID, machine *clusterv1.Machine, message string) error {

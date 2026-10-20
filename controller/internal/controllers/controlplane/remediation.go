@@ -19,6 +19,11 @@ import (
 //
 //nolint:nonamedreturns // named returns used for clarity because we are returning a boolean for a non "question" function.
 func (r *reconciler) remediateMachines(ctx context.Context, cluster db.Cluster, controlPlane *controlPlane) (requeue bool, err error) {
+	// The mixed-provider attachment supports expansion only. Replacing an original
+	// Provisioned host with the explicit NICo target is not an automatic repair.
+	if cluster.ControlPlaneConfig.Capi != nil && cluster.ControlPlaneConfig.Capi.NicoCluster != nil {
+		return false, nil
+	}
 	log := r.logger.With(
 		"clusterID", cluster.ID,
 		"clusterName", cluster.Name,

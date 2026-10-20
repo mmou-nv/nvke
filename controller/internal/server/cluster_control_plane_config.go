@@ -178,6 +178,9 @@ func validateCreateCAPIControlPlaneConfig(c *api.CreateClusterControlPlaneConfig
 	if c.Infra == nil || isEmptyManifestObject(c.Infra.MachineTemplate) {
 		return fmt.Errorf("controlPlaneConfig.infra.machineTemplate is required")
 	}
+	if c.Infra.NicoCluster != nil {
+		return fmt.Errorf("controlPlaneConfig.infra.nicoCluster is only supported through PATCH on an existing ProvisionedCluster")
+	}
 	if err := validateCAPIInfrastructureManifest(c.Infra.MachineTemplate); err != nil {
 		return fmt.Errorf("invalid controlPlaneConfig.infra.machineTemplate: %w", err)
 	}
@@ -350,6 +353,10 @@ func apiInfraControlPlaneProviderFromDB(capiControlPlaneProvider *db.CAPIControl
 	out := &api.InfraControlPlaneProvider{
 		MachineTemplate:    firstInfraMachineTemplateObject(capiControlPlaneProvider.InfraMachineTemplatePreferences),
 		PreKubeadmCommands: append([]string(nil), capiControlPlaneProvider.PreKubeadmCommands...),
+	}
+	if attachment := capiControlPlaneProvider.NicoCluster; attachment != nil {
+		out.NicoCluster = &api.NicoClusterAttachment{SiteID: attachment.SiteID, IdentitySecretName: attachment.IdentitySecretName,
+			SpireServerEndpoint: attachment.SpireServerEndpoint}
 	}
 	if files := apiCloudInitFilesFromDB(capiControlPlaneProvider.BootstrapFiles); files != nil {
 		out.BootstrapFiles = *files

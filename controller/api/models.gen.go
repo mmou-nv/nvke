@@ -41,6 +41,13 @@ const (
 	DiskSelectionStrategyCreateSmallest DiskSelectionStrategyCreate = "smallest"
 )
 
+// Defines values for NodeSecurityProfileSpireAttestationMethod.
+const (
+	NodeSecurityProfileSpireAttestationMethodDsxImds   NodeSecurityProfileSpireAttestationMethod = "dsxImds"
+	NodeSecurityProfileSpireAttestationMethodJoinToken NodeSecurityProfileSpireAttestationMethod = "joinToken"
+	NodeSecurityProfileSpireAttestationMethodTpm       NodeSecurityProfileSpireAttestationMethod = "tpm"
+)
+
 // Defines values for UpdateInProgressType.
 const (
 	UpdateInProgressTypeCpNodesRecycling UpdateInProgressType = "cp_nodes_recycling"
@@ -520,11 +527,18 @@ type InfraControlPlaneProvider struct {
 	// MachineTemplate Arbitrary JSON manifest for the CAPI infrastructure provider MachineTemplate resource used for control plane nodes
 	MachineTemplate map[string]interface{} `json:"machineTemplate,omitempty"`
 
+	// NicoCluster Explicit NICo attachment for scale-out of an existing ProvisionedCluster.
+	// The original CAPI infrastructure reference and manager are retained.
+	// Set through PATCH only; site, identity reference and SPIRE endpoint are immutable once attached.
+	// Control-plane recycling, automatic remediation, surge, scale-down and Kubernetes upgrades are not supported while attached.
+	// Scale-out is limited to one additional node per update and requires an explicit NICo machineID in the template.
+	NicoCluster *NicoClusterAttachment `json:"nicoCluster,omitempty"`
+
 	// PreKubeadmCommands Cloud-init runcmd entries for CAPI-backed control plane nodes
 	PreKubeadmCommands []string `json:"preKubeadmCommands,omitempty"`
 }
 
-// InfraControlPlaneProviderUpdate The mutable infra provider control plane fields. Every field carries three states: omitted
+// InfraControlPlaneProviderUpdate The mutable infra provider control plane fields. Except for the immutable nicoCluster attachment, every field carries three states: omitted
 // leaves the stored value alone, a value replaces it, and an empty value clears it.
 // Mutually exclusive with `nico`: a request carrying both is rejected with 400.
 type InfraControlPlaneProviderUpdate struct {
@@ -533,6 +547,13 @@ type InfraControlPlaneProviderUpdate struct {
 
 	// MachineTemplate Arbitrary JSON manifest for the CAPI infrastructure provider MachineTemplate resource used for control plane nodes
 	MachineTemplate map[string]interface{} `json:"machineTemplate,omitempty"`
+
+	// NicoCluster Explicit NICo attachment for scale-out of an existing ProvisionedCluster.
+	// The original CAPI infrastructure reference and manager are retained.
+	// Set through PATCH only; site, identity reference and SPIRE endpoint are immutable once attached.
+	// Control-plane recycling, automatic remediation, surge, scale-down and Kubernetes upgrades are not supported while attached.
+	// Scale-out is limited to one additional node per update and requires an explicit NICo machineID in the template.
+	NicoCluster *NicoClusterAttachment `json:"nicoCluster,omitempty"`
 
 	// PreKubeadmCommands Cloud-init runcmd entries for CAPI-backed control plane nodes
 	PreKubeadmCommands []string `json:"preKubeadmCommands,omitempty"`
@@ -622,6 +643,23 @@ type MachineHealthIssue struct {
 
 	// Details Additional detail, 2 to 256 characters.
 	Details string `json:"details,omitempty"`
+}
+
+// NicoClusterAttachment Explicit NICo attachment for scale-out of an existing ProvisionedCluster.
+// The original CAPI infrastructure reference and manager are retained.
+// Set through PATCH only; site, identity reference and SPIRE endpoint are immutable once attached.
+// Control-plane recycling, automatic remediation, surge, scale-down and Kubernetes upgrades are not supported while attached.
+// Scale-out is limited to one additional node per update and requires an explicit NICo machineID in the template.
+type NicoClusterAttachment struct {
+	// IdentitySecretName Existing NICo credentials Secret in the management cluster's NKE namespace. Secret contents are never accepted by this API.
+	IdentitySecretName string             `json:"identitySecretName"`
+	SiteID             openapi_types.UUID `json:"siteID"`
+
+	// SpireServerEndpoint Host:port of the same retained SPIRE server, reachable from a fresh attached NICo host.
+	// A DNS name or IP address and numeric port are required; bracket IPv6 addresses.
+	// Pinned in the new node's configuration. Does not change trust material, attestation,
+	// original Provisioned nodes, or the controller's SPIRE API endpoint.
+	SpireServerEndpoint string `json:"spireServerEndpoint"`
 }
 
 // NicoClusterProvider NICo identifiers for the cluster. Fixed at creation.
@@ -806,17 +844,23 @@ type Node struct {
 	// IP Node IP address.
 	IP string `json:"ip,omitempty"`
 
-	// Conditions Lifecycle and health conditions.
-	Conditions NodeConditions `json:"conditions"`
-
 	// ControlPlane Whether the node is a control-plane node.
 	ControlPlane bool `json:"controlPlane"`
+
+	// Conditions Lifecycle and health conditions.
+	Conditions NodeConditions `json:"conditions"`
 
 	// ControlPlaneRollout Control-plane nodes only.
 	ControlPlaneRollout *ControlPlaneRolloutStatus `json:"controlPlaneRollout,omitempty"`
 
 	// Nico NICo instanceID, machineID and instanceTypeID. Omitted when none are set.
 	Nico *NicoNodeProvider `json:"nico,omitempty"`
+
+	// SecurityProfile Immutable agent security settings read from this node's persisted record,
+	// not the controller's current defaults. Omitted when the record lacks a
+	// valid profile or cluster identity. Older controllers omit this field.
+	// Absence is unknown, never permission to infer plaintext or TPM defaults.
+	SecurityProfile *NodeSecurityProfile `json:"securityProfile,omitempty"`
 }
 
 // NodeConditions Each is a Condition. A node normally moves through pending, provisioningClaimed,
@@ -1012,6 +1056,29 @@ type NodePoolCreateConfig struct {
 	TeleportEnabled *bool `json:"teleportEnabled,omitempty"`
 }
 
+// NodeSecurityProfile Non-secret security metadata for the enclosing node ID in the named cluster.
+// This is an export of persisted settings, not proof of live agent health,
+// transferable credentials, SPIRE trust continuity, or manager ownership.
+type NodeSecurityProfile struct {
+	// ClusterID Cluster UUID from the same persisted node record.
+	ClusterID openapi_types.UUID `json:"clusterID"`
+
+	// NodeAgentExternalMTLSEnabled Whether this node requires external mTLS credentials.
+	NodeAgentExternalMTLSEnabled bool `json:"nodeAgentExternalMTLSEnabled"`
+
+	// NodeAgentTLSJWTEnabled Whether this node requires the TLS/JWT agent authentication mode.
+	NodeAgentTLSJWTEnabled bool `json:"nodeAgentTLSJWTEnabled"`
+
+	// SpiffeEnabled Whether this node uses SPIFFE transport identity.
+	SpiffeEnabled bool `json:"spiffeEnabled"`
+
+	// SpireAttestationMethod The attestation method pinned when this node was created.
+	SpireAttestationMethod NodeSecurityProfileSpireAttestationMethod `json:"spireAttestationMethod"`
+}
+
+// NodeSecurityProfileSpireAttestationMethod The attestation method pinned when this node was created.
+type NodeSecurityProfileSpireAttestationMethod string
+
 // NodeSet Read-only, immutable snapshot of a node pool's configuration at a point in time.
 type NodeSet struct {
 	// DesiredCount Number of nodes in the snapshot.
@@ -1058,7 +1125,7 @@ type UpdateClusterControlPlaneConfig struct {
 	// Increasing the count above 1 requires controlPlaneVIP on the cluster.
 	DesiredCount *int `json:"desiredCount,omitempty"`
 
-	// Infra The mutable infra provider control plane fields. Every field carries three states: omitted
+	// Infra The mutable infra provider control plane fields. Except for the immutable nicoCluster attachment, every field carries three states: omitted
 	// leaves the stored value alone, a value replaces it, and an empty value clears it.
 	// Mutually exclusive with `nico`: a request carrying both is rejected with 400.
 	Infra *InfraControlPlaneProviderUpdate `json:"infra,omitempty"`

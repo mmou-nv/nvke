@@ -92,6 +92,7 @@ func ControlPlaneConfigNodeContext(cluster db.Cluster, node db.Node, snapshotCfg
 	}
 	if snapshotCfg.Capi != nil {
 		nodeSet.SetCapi(db.CAPINodePoolProvider{
+			NicoCluster:            snapshotCfg.Capi.NicoCluster,
 			InfraMachineTemplate:   template,
 			SpireAttestationMethod: snapshotCfg.Capi.SpireAttestationMethod,
 			BootstrapFiles:         append([]db.CloudInitFile(nil), snapshotCfg.Capi.BootstrapFiles...),
@@ -129,6 +130,7 @@ func ControlPlaneConfigNodeContext(cluster db.Cluster, node db.Node, snapshotCfg
 	}
 	if snapshotCfg.Capi != nil {
 		nodePool.SetCapi(db.CAPINodePoolProvider{
+			NicoCluster:            snapshotCfg.Capi.NicoCluster,
 			InfraMachineTemplate:   template,
 			SpireAttestationMethod: snapshotCfg.Capi.SpireAttestationMethod,
 			BootstrapFiles:         append([]db.CloudInitFile(nil), snapshotCfg.Capi.BootstrapFiles...),

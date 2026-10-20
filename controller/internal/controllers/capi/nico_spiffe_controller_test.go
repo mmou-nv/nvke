@@ -33,19 +33,35 @@ func TestUnit_NicoSpiffeControllerReconcile(t *testing.T) {
 	t.Parallel()
 
 	type parameters struct {
-		method        db.SpireAttestationMethod
-		status        nicov1.NicoMachineStatus
-		existingPath  string
-		ownerRef      bool
-		deleting      bool
-		missingHostID bool
-		invalidHostID bool
-		dbErr         error
-		wantErr       string
-		wantPath      string
+		requestedMachineID string
+		method             db.SpireAttestationMethod
+		status             nicov1.NicoMachineStatus
+		existingPath       string
+		ownerRef           bool
+		deleting           bool
+		missingHostID      bool
+		invalidHostID      bool
+		dbErr              error
+		wantErr            string
+		wantPath           string
 	}
 
 	tests := map[string]parameters{
+		"rejects a recovered instance on another explicit host": {
+			requestedMachineID: "expected-host", method: db.SpireAttestationMethodTPM,
+			status: nicov1.NicoMachineStatus{MachineID: "different-host", TpmEkPubHash: "other-hash"}, ownerRef: true,
+			wantErr: "does not match the explicitly requested host",
+		},
+		"waits for explicit host observation before granting identity": {
+			requestedMachineID: "expected-host", method: db.SpireAttestationMethodDSXIMDS,
+			status: nicov1.NicoMachineStatus{PrimaryDPUMachineID: "dpu-123"}, ownerRef: true,
+			wantErr: "does not match the explicitly requested host",
+		},
+		"accepts the matching explicit host": {
+			requestedMachineID: "expected-host", method: db.SpireAttestationMethodTPM,
+			status: nicov1.NicoMachineStatus{MachineID: "expected-host", TpmEkPubHash: "expected-hash"}, ownerRef: true,
+			wantPath: constants.TPMSpireAgentPath + "expected-hash",
+		},
 		"annotates a TPM machine from its EK public hash": {
 			method:   db.SpireAttestationMethodTPM,
 			status:   nicov1.NicoMachineStatus{TpmEkPubHash: "hash-current", PrimaryDPUMachineID: "dpu-123"},
@@ -120,6 +136,7 @@ func TestUnit_NicoSpiffeControllerReconcile(t *testing.T) {
 				machine.Annotations[constants.MachineAnnotationKeyHostID] = "not-a-uuid"
 			}
 			nicoMachine := newNicoMachineForSpiffeTest(params.status, params.ownerRef, params.deleting)
+			nicoMachine.Spec.MachineID = params.requestedMachineID
 			nodes := &nicoSpiffeNodeReaderStub{node: db.Node{SpireAttestationMethod: params.method}, err: params.dbErr}
 			controller := newNicoSpiffeControllerForTest(t, nodes, machine, nicoMachine)
 

@@ -169,14 +169,30 @@ func apiNodeFromDB(dbNode *db.Node) api.Node {
 	}
 
 	return api.Node{
-		ID:           dbNode.ID,
-		NodePoolID:   dbNode.NodePoolID,
-		NodeSetID:    dbNode.NodeSetID,
-		Name:         dbNode.Name,
-		IP:           dbNode.IP,
-		Nico:         apiNicoNodeProviderFromDB(dbNode.Nico),
-		ControlPlane: dbNode.ControlPlane,
-		Conditions:   nodeConditions,
+		ID:              dbNode.ID,
+		NodePoolID:      dbNode.NodePoolID,
+		NodeSetID:       dbNode.NodeSetID,
+		Name:            dbNode.Name,
+		IP:              dbNode.IP,
+		Nico:            apiNicoNodeProviderFromDB(dbNode.Nico),
+		ControlPlane:    dbNode.ControlPlane,
+		Conditions:      nodeConditions,
+		SecurityProfile: apiNodeSecurityProfileFromDB(dbNode),
+	}
+}
+
+func apiNodeSecurityProfileFromDB(node *db.Node) *api.NodeSecurityProfile {
+	// Old or incomplete rows are not evidence of disabled security. In
+	// particular, never reconstruct immutable settings from receiver defaults.
+	if node.ID == uuid.Nil || node.ClusterID == uuid.Nil || node.ValidateSecurityProfile() != nil {
+		return nil
+	}
+	return &api.NodeSecurityProfile{
+		ClusterID:                    node.ClusterID,
+		SpiffeEnabled:                node.SpiffeEnabled,
+		SpireAttestationMethod:       api.NodeSecurityProfileSpireAttestationMethod(node.SpireAttestationMethod),
+		NodeAgentExternalMTLSEnabled: node.NodeAgentExternalMTLSEnabled,
+		NodeAgentTLSJWTEnabled:       node.NodeAgentTLSJWTEnabled,
 	}
 }
 

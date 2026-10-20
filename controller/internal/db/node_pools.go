@@ -44,6 +44,7 @@ type NicoNodePoolProvider struct {
 }
 
 type CAPINodePoolProvider struct {
+	NicoCluster            *NicoClusterAttachment `json:"nico_cluster,omitempty"`
 	InfraMachineTemplate   json.RawMessage        `json:"infra_machine_template,omitempty"`
 	BootstrapFiles         []CloudInitFile        `json:"bootstrap_files,omitempty"`
 	PreKubeadmCommands     []string               `json:"pre_kubeadm_commands,omitempty"`
@@ -63,9 +64,17 @@ func (n NicoNodePoolProvider) Equal(other NicoNodePoolProvider) bool {
 // Equal reports whether two CAPINodePoolProvider values represent the same configuration.
 func (c CAPINodePoolProvider) Equal(other CAPINodePoolProvider) bool {
 	return bytes.Equal(c.InfraMachineTemplate, other.InfraMachineTemplate) &&
+		nicoClusterAttachmentsEqual(c.NicoCluster, other.NicoCluster) &&
 		c.SpireAttestationMethod == other.SpireAttestationMethod &&
 		cloudInitFilesEqual(c.BootstrapFiles, other.BootstrapFiles) &&
 		slices.Equal(c.PreKubeadmCommands, other.PreKubeadmCommands)
+}
+
+func nicoClusterAttachmentsEqual(a, b *NicoClusterAttachment) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return *a == *b
 }
 
 func uuidSlicesSetEqual(a, b []uuid.UUID) bool {
@@ -223,6 +232,7 @@ func cloneNicoNodePoolProvider(provider NicoNodePoolProvider) *NicoNodePoolProvi
 
 func cloneCAPINodePoolProvider(provider CAPINodePoolProvider) *CAPINodePoolProvider {
 	return &CAPINodePoolProvider{
+		NicoCluster:            cloneNicoClusterAttachment(provider.NicoCluster),
 		InfraMachineTemplate:   cloneRawMessage(provider.InfraMachineTemplate),
 		BootstrapFiles:         append([]CloudInitFile(nil), provider.BootstrapFiles...),
 		PreKubeadmCommands:     append([]string(nil), provider.PreKubeadmCommands...),

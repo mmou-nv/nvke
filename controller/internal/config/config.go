@@ -168,6 +168,10 @@ type Config struct {
 	// the per-node DPU ASN on native-networking sites. When empty, CAPI and
 	// subnet-based NICo pools use the static Forge peer ASN.
 	KubeVipFMDSEndpoint string `env:"KUBE_VIP_FMDS_ENDPOINT"`
+	// KubeVipAttachedNicoFMDSEndpoint applies only to nodes whose pinned CAPI
+	// configuration contains a NICo attachment. It does not change retained
+	// Provisioned nodes, including retries before the attachment is created.
+	KubeVipAttachedNicoFMDSEndpoint string `env:"KUBE_VIP_ATTACHED_NICO_FMDS_ENDPOINT"`
 
 	// ProfilesDir is the directory from which to read osProfiles and configProfiles
 	ProfilesDir string `env:"PROFILES_DIR" default:"./profiles"`

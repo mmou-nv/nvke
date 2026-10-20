@@ -102,6 +102,14 @@ func (a *Activities) configureKubeVip(ctx context.Context, input ConfigureKubeVi
 	bgpPeerASN := defaultBGPPeerASN
 	bgpPeerASNSource := nkeproto.ReconcileKubeVipRequest_BGP_PEER_ASN_SOURCE_STATIC
 	fmdsEndpoint := a.cfg.KubeVipFMDSEndpoint
+	// GetNodeContext resolved this payload from the node's immutable snapshot,
+	// not the cluster's newest template. Keep original Provisioned nodes static.
+	if nodePool.Capi != nil && nodePool.Capi.NicoCluster != nil {
+		fmdsEndpoint = a.cfg.KubeVipAttachedNicoFMDSEndpoint
+		if fmdsEndpoint == "" {
+			return ConfigureKubeVipResult{}, fmt.Errorf("NICo attachment requires KUBE_VIP_ATTACHED_NICO_FMDS_ENDPOINT")
+		}
+	}
 	if fmdsEndpoint != "" {
 		bgpPeerAS = fmdsBGPPeerAS
 		bgpPeerASN = 0

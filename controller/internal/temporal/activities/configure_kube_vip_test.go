@@ -4,6 +4,7 @@
 package activities
 
 import (
+	"encoding/json"
 	"fmt"
 	"testing"
 
@@ -21,6 +22,76 @@ import (
 	"github.com/dsx-ai-factory/nke/controller/internal/db"
 	"github.com/dsx-ai-factory/nke/controller/internal/testutil"
 )
+
+func TestConfigureKubeVip_RetainedAttachmentUsesPinnedNetwork(t *testing.T) {
+	for _, test := range []struct {
+		name                                string
+		attached, endpoint, currentAttached bool
+		wantError                           bool
+	}{
+		{name: "original before attachment", endpoint: true},
+		{name: "original after attachment", endpoint: true, currentAttached: true},
+		{name: "new native node", attached: true, endpoint: true, currentAttached: true},
+		{name: "native node missing endpoint fails closed", attached: true, currentAttached: true, wantError: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			node := db.Node{ID: uuid.New(), ClusterID: uuid.New(), ControlPlane: true,
+				ControlPlaneConfigurationID: uuid.New(), IP: "192.0.2.14"}
+			attachment := &db.NicoClusterAttachment{SiteID: uuid.New(), IdentitySecretName: "identity"}
+			cluster := db.Cluster{ID: node.ClusterID, ProviderType: db.ProviderTypeCAPI, ControlPlaneVIP: "192.0.2.100"}
+			if test.currentAttached {
+				cluster.ControlPlaneConfig.SetCapi(db.CAPIControlPlaneProvider{NicoCluster: attachment})
+			}
+			pinned := db.ControlPlaneConfigSpec{Capi: &db.CAPIControlPlaneProvider{
+				InfraMachineTemplatePreferences: []json.RawMessage{json.RawMessage(`{"kind":"ProvisionedMachineTemplate"}`)},
+			}}
+			if test.attached {
+				pinned.Capi.NicoCluster = attachment
+				pinned.Capi.InfraMachineTemplatePreferences = []json.RawMessage{json.RawMessage(`{"kind":"NicoMachineTemplate"}`)}
+			}
+			before, err := json.Marshal(pinned)
+			require.NoError(t, err)
+			queries := &testutil.MockDB{}
+			queries.On("GetNode", mock.Anything, node.ID).Return(node, nil).Twice()
+			queries.On("GetCluster", mock.Anything, cluster.ID).Return(cluster, nil).Twice()
+			queries.On("GetControlPlaneConfiguration", mock.Anything, node.ControlPlaneConfigurationID).Return(
+				db.ControlPlaneConfiguration{ID: node.ControlPlaneConfigurationID, ClusterID: cluster.ID, Config: pinned}, nil).Once()
+			fakeAgent := &agenttest.FakeClient{ReconcileKubeVipResponse: &nkeproto.ReconcileKubeVipResponse{
+				Outcome: nkeproto.ReconcileKubeVipResponse_OUTCOME_UNCHANGED,
+			}}
+			cfg := config.Config{}
+			if test.endpoint {
+				cfg.KubeVipAttachedNicoFMDSEndpoint = "http://169.254.169.254/latest/meta-data/asn"
+			}
+			a := &Activities{cfg: cfg, db: queries, nodeAgentClient: fakeAgent}
+			suite := &testsuite.WorkflowTestSuite{}
+			env := suite.NewTestActivityEnvironment()
+			env.RegisterActivity(a.configureKubeVip)
+			_, err = env.ExecuteActivity(a.configureKubeVip, ConfigureKubeVipInput{NodeID: node.ID})
+			if test.wantError {
+				require.ErrorContains(t, err, "KUBE_VIP_ATTACHED_NICO_FMDS_ENDPOINT")
+				require.Empty(t, fakeAgent.ReconcileKubeVipRequests)
+			} else {
+				require.NoError(t, err)
+				require.Len(t, fakeAgent.ReconcileKubeVipRequests, 1)
+				request := fakeAgent.ReconcileKubeVipRequests[0]
+				if test.attached {
+					require.Equal(t, nkeproto.ReconcileKubeVipRequest_BGP_PEER_ASN_SOURCE_FMDS, request.GetBgpPeerAsnSource())
+					require.Equal(t, cfg.KubeVipAttachedNicoFMDSEndpoint, request.GetFmdsEndpoint())
+					require.Zero(t, request.GetBgpPeerAsn())
+				} else {
+					require.Equal(t, nkeproto.ReconcileKubeVipRequest_BGP_PEER_ASN_SOURCE_STATIC, request.GetBgpPeerAsnSource())
+					require.Equal(t, uint32(4294967000), request.GetBgpPeerAsn())
+					require.Empty(t, request.GetFmdsEndpoint())
+				}
+			}
+			after, err := json.Marshal(pinned)
+			require.NoError(t, err)
+			require.JSONEq(t, string(before), string(after))
+			queries.AssertExpectations(t)
+		})
+	}
+}
 
 func TestConfigureKubeVip_BGPPEERASNFromProvider(t *testing.T) {
 	t.Parallel()

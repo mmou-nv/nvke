@@ -126,6 +126,11 @@ func (c *NicoSpiffeController) Reconcile(ctx context.Context, req ctrl.Request) 
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("get node %s for Machine %s/%s: %w", nodeID, machine.Namespace, machine.Name, err)
 	}
+	// An explicit target must match NICo's observed host before we grant that
+	// host the node's workload identity, including after recovery by instance name.
+	if nicoMachine.Spec.MachineID != "" && nicoMachine.Spec.MachineID != nicoMachine.Status.MachineID {
+		return ctrl.Result{}, fmt.Errorf("NICo observed machine identity does not match the explicitly requested host")
+	}
 	method := node.SpireAttestationMethod
 	spireAgentSpiffeIDPath, expectedPathPrefix := c.spireAgentSpiffeIDPath(nicoMachine, method)
 	if spireAgentSpiffeIDPath == "" {

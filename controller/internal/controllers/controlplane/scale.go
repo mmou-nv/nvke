@@ -92,6 +92,14 @@ func (r *reconciler) createPendingNode(
 		},
 	}
 	nodes.PinAgentProfile(&pendingNode, r.cfg)
+	if cluster.ControlPlaneConfig.Capi != nil && cluster.ControlPlaneConfig.Capi.NicoCluster != nil {
+		if !pendingNode.SpiffeEnabled {
+			return db.Node{}, fmt.Errorf("NICo attachment requires SPIFFE-enabled node creation")
+		}
+		if err := pendingNode.ValidateSecurityProfile(); err != nil {
+			return db.Node{}, err
+		}
+	}
 
 	if cluster.ProviderType == db.ProviderTypeNico {
 		// Every node on a Nico cluster carries a payload, which strict readers

@@ -10,11 +10,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"reflect"
+	"strconv"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/uptrace/bun"
+	"k8s.io/apimachinery/pkg/util/validation"
 )
 
 // ControlPlaneConfigSpec is the snapshot payload stored in
@@ -45,10 +48,44 @@ type NicoControlPlaneProvider struct {
 }
 
 type CAPIControlPlaneProvider struct {
+	NicoCluster                     *NicoClusterAttachment `json:"nico_cluster,omitempty"`
 	InfraMachineTemplatePreferences []json.RawMessage      `json:"infra_machine_template_preferences,omitempty"`
 	SpireAttestationMethod          SpireAttestationMethod `json:"spire_attestation_method,omitempty"`
 	BootstrapFiles                  []CloudInitFile        `json:"bootstrap_files,omitempty"`
 	PreKubeadmCommands              []string               `json:"pre_kubeadm_commands,omitempty"`
+}
+
+// NicoClusterAttachment binds new CAPI control-plane machines to an explicit NICo site and identity.
+// It does not replace the cluster's primary infrastructure reference or manager.
+type NicoClusterAttachment struct {
+	SiteID              uuid.UUID `json:"site_id"`
+	IdentitySecretName  string    `json:"identity_secret_name"`
+	SpireServerEndpoint string    `json:"spire_server_endpoint"`
+}
+
+// SpireServer validates and splits the pinned endpoint for newly attached nodes.
+func (a NicoClusterAttachment) SpireServer() (string, string, error) {
+	host, port, err := net.SplitHostPort(a.SpireServerEndpoint)
+	if err != nil || host == "" || host == "localhost" {
+		return "", "", fmt.Errorf("nicoCluster.spireServerEndpoint requires a reachable host:port")
+	}
+	ip := net.ParseIP(host)
+	if (ip == nil && len(validation.IsDNS1123Subdomain(host)) != 0) ||
+		(ip != nil && (ip.IsLoopback() || ip.IsUnspecified() || ip.IsMulticast())) {
+		return "", "", fmt.Errorf("nicoCluster.spireServerEndpoint requires a non-local IP address or DNS name")
+	}
+	if number, err := strconv.ParseUint(port, 10, 16); err != nil || number == 0 {
+		return "", "", fmt.Errorf("nicoCluster.spireServerEndpoint requires a numeric port from 1 to 65535")
+	}
+	return host, port, nil
+}
+
+func cloneNicoClusterAttachment(in *NicoClusterAttachment) *NicoClusterAttachment {
+	if in == nil {
+		return nil
+	}
+	out := *in
+	return &out
 }
 
 func (c *ControlPlaneConfigSpec) SetNico(provider NicoControlPlaneProvider) {
@@ -150,6 +187,7 @@ func cloneCAPIControlPlaneProvider(provider *CAPIControlPlaneProvider) *CAPICont
 		return nil
 	}
 	return &CAPIControlPlaneProvider{
+		NicoCluster:                     cloneNicoClusterAttachment(provider.NicoCluster),
 		InfraMachineTemplatePreferences: cloneRawMessages(provider.InfraMachineTemplatePreferences),
 		SpireAttestationMethod:          provider.SpireAttestationMethod,
 		BootstrapFiles:                  append([]CloudInitFile(nil), provider.BootstrapFiles...),

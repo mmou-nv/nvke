@@ -132,6 +132,7 @@ var stayEnv = map[string]string{
 	"NODE_HEALTH_CHECK_DISABLED":                            chartUnset,
 	"NODE_HEALTH_CHECK_TIMEOUT":                             chartUnset,
 	"KUBE_VIP_FMDS_ENDPOINT":                                chartUnset,
+	"KUBE_VIP_ATTACHED_NICO_FMDS_ENDPOINT":                  chartUnset,
 	"NODE_REBOOT_INITIAL_TIMEOUT":                           chartUnset,
 	"NODE_REBOOT_TIMEOUT_INCREMENT":                         chartUnset,
 	"NODE_REBOOT_MAX_TIMEOUT":                               chartUnset,

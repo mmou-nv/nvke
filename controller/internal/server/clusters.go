@@ -523,6 +523,9 @@ func (s *clusterService) UpdateCluster(ctx context.Context, req api.UpdateCluste
 		}
 		// Update fields from request
 		if req.Body.EnableCPNodeRecycling != nil {
+			if *req.Body.EnableCPNodeRecycling && dbCluster.ControlPlaneConfig.Capi != nil && dbCluster.ControlPlaneConfig.Capi.NicoCluster != nil {
+				return newBadRequestErrorf("control-plane recycling is not supported while a nicoCluster attachment is active")
+			}
 			dbCluster.EnableCPNodeRecycling = *req.Body.EnableCPNodeRecycling
 		}
 		if req.Body.TeleportEnabled != nil {
@@ -725,6 +728,7 @@ func (s *clusterService) applyControlPlaneConfigUpdateWithCIDRCheck(
 }
 
 func (s *clusterService) applyClusterControlPlaneConfigUpdate(ctx context.Context, tx db.Tx, cluster *db.Cluster, req *api.UpdateClusterControlPlaneConfig) error {
+	previousDesiredCount := cluster.ControlPlaneConfig.DesiredCount
 	if req == nil {
 		req = &api.UpdateClusterControlPlaneConfig{}
 	}
@@ -802,6 +806,9 @@ func (s *clusterService) applyClusterControlPlaneConfigUpdate(ctx context.Contex
 		cluster.ControlPlaneVIP,
 		db.IsControlPlaneRolloutRequired(cluster.ControlPlaneConfig.ControlPlaneConfigSpec, controlPlaneConfigSpec),
 	); err != nil {
+		return err
+	}
+	if err := s.validateNicoClusterAttachmentUpdate(ctx, tx, *cluster, controlPlaneConfigSpec, previousDesiredCount); err != nil {
 		return err
 	}
 
@@ -921,6 +928,14 @@ func (s *clusterService) applyClusterLevelControlPlaneSpecUpdate(
 		capi, err := spec.CAPIProvider()
 		if err != nil {
 			return err
+		}
+		if attachment := req.Infra.NicoCluster; attachment != nil {
+			next := db.NicoClusterAttachment{SiteID: attachment.SiteID, IdentitySecretName: attachment.IdentitySecretName,
+				SpireServerEndpoint: attachment.SpireServerEndpoint}
+			if capi.NicoCluster != nil && *capi.NicoCluster != next {
+				return newBadRequestErrorf("controlPlaneConfig.infra.nicoCluster is immutable once attached")
+			}
+			capi.NicoCluster = &next
 		}
 		if req.Infra.BootstrapFiles != nil {
 			capi.BootstrapFiles = dbCloudInitFilesFromAPI(req.Infra.BootstrapFiles)

@@ -72,6 +72,9 @@ func (c *Client) CreateMachine(ctx context.Context, deps shared.MachineCreateDep
 	if err := applyNicoMachineInstanceLabels(node, cluster, nodePool.ID, infraMachine); err != nil {
 		return err
 	}
+	if err := ensureNicoClusterAttachment(ctx, deps, node, nodeSet, cluster, infraMachine); err != nil {
+		return err
+	}
 
 	if err := deps.K8sClient.Patch(ctx, infraMachine, client.Apply, client.FieldOwner(deps.FieldManagerName), client.ForceOwnership); err != nil {
 		return fmt.Errorf("failed to apply infra machine %s: %w", infraMachine.GetName(), err)

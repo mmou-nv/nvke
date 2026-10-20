@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -347,6 +348,63 @@ func TestRenderCAPIBootstrapUserData_ExternalMTLSRequiresCA(t *testing.T) {
 	nodeSet.SetCapi(db.CAPINodePoolProvider{SpireAttestationMethod: db.SpireAttestationMethodTPM})
 	_, err := (&Client{}).renderBootstrapUserData(context.Background(), deps, nodeForBootstrapConfig(cfg), nodeSet, "")
 	require.ErrorContains(t, err, "controller client CA bundle is required")
+}
+
+func TestNicoAttachmentBootstrapPinsSpireEndpointAndPreservesSecurity(t *testing.T) {
+	for _, externalMTLS := range []bool{false, true} {
+		for _, tlsJWT := range []bool{false, true} {
+			t.Run(fmt.Sprintf("external-mtls=%t tls-jwt=%t", externalMTLS, tlsJWT), func(t *testing.T) {
+				cfg := config.Config{SpiffeEnabled: true, SpireServerAddress: "192.0.2.10", SpireServerPort: "9091",
+					NodeAgentExternalMTLSEnabled: externalMTLS,
+					NodeAgent: config.NodeAgentConfig{Port: "15005", SpireAttestationMethod: config.SpireAttestationMethodTPM,
+						TLSJWT: config.TLSJWTConfig{Enabled: tlsJWT, DSXIdentityExchangeURL: "https://identity.example.test/exchange"}},
+				}
+				node := nodeForBootstrapConfig(cfg)
+				deps := testDeps(cfg, "original-controller-ca", nil, "original.example.test", "original-trust-bundle", nil)
+				provider := db.CAPINodePoolProvider{PreKubeadmCommands: []string{"echo prepare"},
+					BootstrapFiles: []db.CloudInitFile{{Path: "/etc/provider.conf", Content: "unchanged"}}}
+				var originalSet, attachedSet db.NodeSet
+				originalSet.SetCapi(provider)
+				original, err := (&Client{}).renderBootstrapUserData(t.Context(), deps, node, originalSet, "")
+				require.NoError(t, err)
+				provider.NicoCluster = &db.NicoClusterAttachment{SpireServerEndpoint: "192.0.2.11:30081"}
+				attachedSet.SetCapi(provider)
+				before, err := json.Marshal(attachedSet)
+				require.NoError(t, err)
+				rendered, err := (&Client{}).renderBootstrapUserData(t.Context(), deps, node, attachedSet, "")
+				require.NoError(t, err)
+				var oldConfig, newConfig cloudInitConfig
+				require.NoError(t, yaml.Unmarshal([]byte(original), &oldConfig))
+				require.NoError(t, yaml.Unmarshal([]byte(rendered), &newConfig))
+				require.Len(t, newConfig.WriteFiles, len(oldConfig.WriteFiles))
+				for index, file := range oldConfig.WriteFiles {
+					if file.Path == "/etc/spire-agent/agent.conf" {
+						file.Content = strings.ReplaceAll(file.Content, `server_address = "192.0.2.10"`, `server_address = "192.0.2.11"`)
+						file.Content = strings.ReplaceAll(file.Content, `server_port = "9091"`, `server_port = "30081"`)
+					}
+					require.Equal(t, file, newConfig.WriteFiles[index])
+				}
+				require.Equal(t, []string{"echo prepare", "systemctl restart nke-agent.service"}, oldConfig.RunCmd)
+				require.Equal(t, []string{"echo prepare", "systemctl restart spire-agent.service", "systemctl restart nke-agent.service"}, newConfig.RunCmd)
+				require.Contains(t, rendered, `NodeAttestor "tpm"`)
+				require.NotContains(t, rendered, "--disable-mtls")
+				unchangedOriginal, err := (&Client{}).renderBootstrapUserData(t.Context(), deps, node, originalSet, "")
+				require.NoError(t, err)
+				require.Equal(t, original, unchangedOriginal)
+				// A retry must use the saved attachment, not current deployment defaults.
+				deps.Config.SpireServerAddress, deps.Config.SpireServerPort = "unreachable.svc.cluster.local", "8081"
+				deps.Config.SpiffeEnabled = false
+				deps.Config.NodeAgent.SpireAttestationMethod = config.SpireAttestationMethodDSXIMDS
+				retried, err := (&Client{}).renderBootstrapUserData(t.Context(), deps, node, attachedSet, "")
+				require.NoError(t, err)
+				require.Equal(t, rendered, retried)
+				after, err := json.Marshal(attachedSet)
+				require.NoError(t, err)
+				require.Equal(t, before, after)
+				require.Equal(t, nodeForBootstrapConfig(cfg), node)
+			})
+		}
+	}
 }
 
 func TestUnit_RenderCAPIBootstrapUserData_AllowsFileOverride(t *testing.T) {

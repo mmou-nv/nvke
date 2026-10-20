@@ -107,6 +107,13 @@ func (*Client) renderBootstrapUserData(
 		})
 	}
 	if node.SpiffeEnabled {
+		serverAddress, serverPort := deps.Config.SpireServerAddress, deps.Config.SpireServerPort
+		if attachment := capiNodeSetProvider.NicoCluster; attachment != nil {
+			serverAddress, serverPort, err = attachment.SpireServer()
+			if err != nil {
+				return "", err
+			}
+		}
 		dsxIMDSPluginChecksum := deps.Config.NodeAgent.DSXImds.PluginChecksum
 		if dsxIMDSPluginChecksum == "" {
 			dsxIMDSPluginChecksum = "${DSX_IMDS_PLUGIN_CHECKSUM}"
@@ -124,8 +131,8 @@ func (*Client) renderBootstrapUserData(
 				Permissions: "0644",
 				Content: buildSpireAgentConfig(spireAgentConfig{
 					AttestationMethod:     string(node.SpireAttestationMethod),
-					ServerAddress:         deps.Config.SpireServerAddress,
-					ServerPort:            deps.Config.SpireServerPort,
+					ServerAddress:         serverAddress,
+					ServerPort:            serverPort,
 					TrustDomain:           trustDomain,
 					TrustBundlePath:       constants.CAPISpireTrustBundlePath,
 					SpireJoinToken:        spireJoinToken,
@@ -147,6 +154,10 @@ func (*Client) renderBootstrapUserData(
 	}
 
 	runCommands := append([]string(nil), capiNodeSetProvider.PreKubeadmCommands...)
+	if node.SpiffeEnabled && capiNodeSetProvider.NicoCluster != nil {
+		// The image may have started SPIRE before cloud-init supplied its identity configuration.
+		runCommands = append(runCommands, "systemctl restart spire-agent.service")
+	}
 	runCommands = append(runCommands, "systemctl restart nke-agent.service")
 
 	userData := cloudInitConfig{
