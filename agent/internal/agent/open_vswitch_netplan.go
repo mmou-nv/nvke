@@ -181,6 +181,14 @@ func (s *NodeAgentServer) applyOpenVSwitchNetplanPlan(ctx context.Context, plan 
 	if _, err := s.runOpenVSwitchCommand("netplan", "generate"); err != nil {
 		return fmt.Errorf("validate netplan: %w", err)
 	}
+	// OVS does not inherit locally administered MACs. Pin the bridge before
+	// netplan adds the uplink, as the ifupdown backend does, to preserve DHCP identity.
+	if openVSwitchMACIsLocallyAdministered(plan.uplinkMAC) {
+		if _, err := s.runOpenVSwitchCommand("ovs-vsctl", "--may-exist", "add-br", plan.bridgeName,
+			"--", "set", "bridge", plan.bridgeName, "other-config:hwaddr="+plan.uplinkMAC); err != nil {
+			return err
+		}
+	}
 	if _, err := s.runOpenVSwitchCommand("netplan", "apply"); err != nil {
 		return fmt.Errorf("apply netplan: %w", err)
 	}
